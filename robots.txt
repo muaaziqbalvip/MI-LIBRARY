@@ -1,7 +1,14 @@
 User-agent: *
 Allow: /
+Allow: /?book=
+Allow: /?q=
 Disallow: /admin.html
 Disallow: /admin
-Disallow: /api/
+Disallow: /api/download
 
-Sitemap: https://luminalib.vercel.app/sitemap.xml
+User-agent: Googlebot
+Allow: /
+Allow: /?book=
+Disallow: /admin
+
+Sitemap: https://mi-library.vercel.app/sitemap.xml

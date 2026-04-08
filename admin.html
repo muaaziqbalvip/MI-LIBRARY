@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MI LIBRARY– Control Center</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" href="https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png" type="image/png" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getDatabase, ref, onValue, push, set, get, remove, update, serverTimestamp, query, orderByChild }
+      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBbnU8DkthpYQMHOLLyj6M0cc05qXfjMcw",
+      authDomain: "ramadan-2385b.firebaseapp.com",
+      databaseURL: "https://ramadan-2385b-default-rtdb.firebaseio.com",
+      projectId: "ramadan-2385b",
+      storageBucket: "ramadan-2385b.firebasestorage.app",
+      messagingSenderId: "882828936310",
+      appId: "1:882828936310:web:7f97b921031fe130fe4b57"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+    const provider = new GoogleAuthProvider();
+
+    window.FBA = { auth, db, provider, ref, onValue, push, set, get, remove, update, serverTimestamp, query, orderByChild, signInWithPopup, signOut, onAuthStateChanged };
+    window.adminBooks = [];
+    window.adminVisitors = [];
+    window.adminDownloads = [];
+
+    // Live data listeners
+    onValue(ref(db, 'books'), snap => {
+      const data = snap.val() || {};
+      window.adminBooks = Object.entries(data).map(([id, b]) => ({ id, ...b }));
+      if (window.adminUnlocked) {
+        renderBooksTable();
+        updateDashStats();
+      }
+    });
+
+    onValue(ref(db, 'analytics/visitors'), snap => {
+      const data = snap.val() || {};
+      window.adminVisitors = Object.entries(data).map(([id, v]) => ({ id, ...v }));
+      if (window.adminUnlocked) renderAnalyticsTable();
+    });
+
+    onValue(ref(db, 'analytics/downloads'), snap => {
+      const data = snap.val() || {};
+      window.adminDownloads = Object.entries(data).map(([id, d]) => ({ id, ...d }));
+      if (window.adminUnlocked) updateDashStats();
+    });
+
+    // Auth listener
+    onAuthStateChanged(auth, user => {
+      window.adminUser = user;
+      const el = document.getElementById('adminUserInfo');
+      if (el && user) el.textContent = user.displayName || user.email;
+    });
+
+    // CRUD Functions
+    window.saveBook = async (bookData, editId = null) => {
+      try {
+        if (editId) {
+          await update(ref(db, `books/${editId}`), { ...bookData, updatedAt: serverTimestamp() });
+          showAdminToast('Book updated successfully!', 'success');
+        } else {
+          const newRef = push(ref(db, 'books'));
+          await set(newRef, { ...bookData, createdAt: serverTimestamp(), views: 0 });
+          showAdminToast('Book added successfully!', 'success');
+        }
+        closeBookModal();
+      } catch(e) { showAdminToast('Error: ' + e.message, 'error'); }
+    };
+
+    window.deleteBook = async (bookId, title) => {
+      if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
+      try {
+        await remove(ref(db, `books/${bookId}`));
+        showAdminToast('Book deleted.', 'success');
+      } catch(e) { showAdminToast('Error: ' + e.message, 'error'); }
+    };
+
+    window.toggleTrending = async (bookId, current) => {
+      await update(ref(db, `books/${bookId}`), { trending: !current });
+      showAdminToast(!current ? 'Marked as Trending!' : 'Removed from Trending', 'success');
+    };
+  </script>
+
+  <style>
+    :root {
+      --bg: #070512;
+      --card: #0f0c1e;
+      --glass: rgba(255,255,255,0.04);
+      --gold: #f5c842;
+      --cyan: #00f5ff;
+      --purple: #8b5cf6;
+      --rose: #ff3d7f;
+      --green: #10b981;
+      --text: #f0ecff;
+      --muted: #7c6fa0;
+      --border: rgba(255,255,255,0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; overflow-x: hidden;
+    }
+    body::before {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 100% 50% at 10% 0%, rgba(139,92,246,0.1) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 90% 100%, rgba(0,245,255,0.06) 0%, transparent 50%);
+    }
+
+    /* Lock Screen */
+    #lockScreen {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(180deg, #070512, #0f0c1e);
+    }
+    .lock-card {
+      width: calc(100% - 40px); max-width: 380px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(139,92,246,0.3);
+      border-radius: 28px; padding: 40px 32px;
+      text-align: center;
+      animation: scaleIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    @keyframes scaleIn { from{opacity:0;transform:scale(0.8)}to{opacity:1;transform:scale(1)} }
+
+    .logo-text { font-family: 'Cinzel Decorative', serif; font-size: 1.4rem; font-weight: 900;
+      background: linear-gradient(135deg, #f5c842, #00f5ff); -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent; }
+
+    .passcode-dots { display: flex; gap: 16px; justify-content: center; margin: 24px 0; }
+    .dot { width: 16px; height: 16px; border-radius: 50%; background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.2); transition: all 0.2s; }
+    .dot.filled { background: var(--gold); border-color: var(--gold); box-shadow: 0 0 12px rgba(245,200,66,0.5); }
+
+    .numpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 260px; margin: 0 auto; }
+    .num-btn {
+      padding: 18px; border-radius: 16px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text); font-size: 1.2rem; font-weight: 700;
+      cursor: pointer; transition: all 0.2s; font-family: 'Outfit', sans-serif;
+    }
+    .num-btn:hover { background: rgba(139,92,246,0.2); border-color: var(--purple); }
+    .num-btn:active { transform: scale(0.95); }
+
+    /* Sidebar */
+    #sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
+      background: rgba(11,8,25,0.95);
+      border-right: 1px solid var(--border);
+      backdrop-filter: blur(24px);
+      padding: 20px 16px; z-index: 100;
+      display: flex; flex-direction: column; gap: 4px;
+      transform: translateX(-100%); transition: transform 0.3s ease;
+    }
+    #sidebar.open { transform: translateX(0); }
+    @media (min-width: 768px) { #sidebar { transform: translateX(0); } }
+
+    .sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 8px 0 20px; }
+    .sidebar-logo img { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 14px; border-radius: 12px;
+      color: var(--muted); font-size: 0.82rem; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; letter-spacing: 0.3px;
+    }
+    .nav-item:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+    .nav-item.active { background: rgba(245,200,66,0.12); color: var(--gold); }
+    .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+    /* Top Bar */
+    #topBar {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(7,5,18,0.9); backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 20px; display: flex; align-items: center; gap: 14px;
+    }
+
+    /* Main */
+    #mainArea { margin-left: 0; padding: 20px 16px; }
+    @media (min-width: 768px) { #mainArea { margin-left: 240px; } }
+
+    /* Section panes */
+    .pane { display: none; }
+    .pane.active { display: block; animation: fadeUp 0.35s ease; }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)} }
+
+    /* Stat Cards */
+    .dash-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 24px; }
+    @media (min-width: 600px) { .dash-grid { grid-template-columns: repeat(4, 1fr); } }
+
+    .dash-card {
+      background: var(--glass); border: 1px solid var(--border);
+      border-radius: 18px; padding: 18px; text-align: center;
+      transition: all 0.3s; backdrop-filter: blur(8px);
+    }
+    .dash-card:hover { transform: translateY(-3px); border-color: var(--purple); }
+    .dash-num { font-family: 'JetBrains Mono', monospace; font-size: 1.8rem; font-weight: 700; }
+    .dash-label { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+    /* Table */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .data-table th {
+      padding: 12px 14px; text-align: left;
+      font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px;
+      border-bottom: 1px solid var(--border);
+    }
+    .data-table td { padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+    .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+    /* Form */
+    .form-group { margin-bottom: 16px; }
+    .form-label { font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display: block; }
+    .form-input {
+      width: 100%; padding: 12px 16px;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      border-radius: 12px; color: var(--text); font-size: 0.85rem; outline: none;
+      transition: all 0.2s; font-family: 'Outfit', sans-serif;
+    }
+    .form-input:focus { border-color: var(--purple); box-shadow: 0 0 16px rgba(139,92,246,0.2); }
+    .form-input::placeholder { color: var(--muted); }
+    select.form-input option { background: var(--card); }
+
+    textarea.form-input { resize: vertical; min-height: 80px; }
+
+    /* Buttons */
+    .btn { padding: 10px 20px; border-radius: 12px; border: none; font-weight: 700; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; font-family: 'Outfit', sans-serif; }
+    .btn-gold { background: linear-gradient(135deg, var(--gold), #e6a817); color: #0a0612; box-shadow: 0 4px 16px rgba(245,200,66,0.3); }
+    .btn-gold:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(245,200,66,0.5); }
+    .btn-purple { background: rgba(139,92,246,0.2); border: 1px solid rgba(139,92,246,0.4); color: var(--purple); }
+    .btn-purple:hover { background: rgba(139,92,246,0.3); }
+    .btn-red { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
+    .btn-red:hover { background: rgba(239,68,68,0.25); }
+    .btn-green { background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3); color: var(--green); }
+    .btn-glass { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); }
+    .btn-sm { padding: 6px 12px; font-size: 0.72rem; border-radius: 8px; }
+
+    /* Modal */
+    #bookFormModal {
+      position: fixed; inset: 0; z-index: 500;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+    }
+    #bookFormModal.open { display: flex; }
+
+    .modal-box {
+      width: calc(100% - 32px); max-width: 520px;
+      background: linear-gradient(180deg, #1a1035 0%, #0d0920 100%);
+      border: 1px solid rgba(139,92,246,0.3); border-radius: 24px;
+      padding: 24px; max-height: 90vh; overflow-y: auto;
+      animation: scaleIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    /* Toast */
+    #adminToast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      z-index: 9999; padding: 12px 24px; border-radius: 12px;
+      font-size: 0.82rem; font-weight: 700; display: none;
+      animation: toastIn 0.3s ease;
+      backdrop-filter: blur(16px);
+    }
+    @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(20px)}to{opacity:1;transform:translateX(-50%) translateY(0)} }
+
+    /* Badge */
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 0.65rem; font-weight: 700; }
+    .badge-green { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .badge-gold { background: rgba(245,200,66,0.15); color: var(--gold); border: 1px solid rgba(245,200,66,0.3); }
+    .badge-muted { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--border); }
+
+    /* Section title */
+    .page-title { font-family: 'Cinzel Decorative', serif; font-size: 1rem; font-weight: 700; color: var(--gold); margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+
+    /* Card */
+    .panel { background: var(--glass); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; backdrop-filter: blur(8px); margin-bottom: 20px; }
+    .panel-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .panel-body { padding: 0; overflow-x: auto; }
+
+    /* Book Preview */
+    .book-thumb { width: 36px; height: 48px; object-fit: cover; border-radius: 4px; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Lock Screen ────────────────────────────────────────── -->
+<div id="lockScreen">
+  <div class="lock-card">
+    <img src="https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png"
+         alt="LuminaLib" class="w-14 h-14 rounded-2xl mx-auto object-cover mb-4" />
+    <div class="logo-text mb-1">Control Center</div>
+    <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;">Admin Access Required</p>
+    <p id="lockHint" style="font-size:0.72rem;color:var(--rose);margin-bottom:16px;height:18px;"></p>
+
+    <div class="passcode-dots">
+      <div class="dot" id="d0"></div>
+      <div class="dot" id="d1"></div>
+      <div class="dot" id="d2"></div>
+      <div class="dot" id="d3"></div>
+      <div class="dot" id="d4"></div>
+      <div class="dot" id="d5"></div>
+    </div>
+
+    <div class="numpad">
+      <button class="num-btn" onclick="numPress('1')">1</button>
+      <button class="num-btn" onclick="numPress('2')">2</button>
+      <button class="num-btn" onclick="numPress('3')">3</button>
+      <button class="num-btn" onclick="numPress('4')">4</button>
+      <button class="num-btn" onclick="numPress('5')">5</button>
+      <button class="num-btn" onclick="numPress('6')">6</button>
+      <button class="num-btn" onclick="numPress('7')">7</button>
+      <button class="num-btn" onclick="numPress('8')">8</button>
+      <button class="num-btn" onclick="numPress('9')">9</button>
+      <button class="num-btn" onclick="numPress('clear')" style="color:var(--rose)">C</button>
+      <button class="num-btn" onclick="numPress('0')">0</button>
+      <button class="num-btn" onclick="numPress('del')" style="color:var(--muted)">⌫</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Admin UI (hidden until unlocked) ──────────────────── -->
+<div id="adminUI" style="display:none;">
+
+  <!-- Sidebar -->
+  <nav id="sidebar" class="open">
+    <div class="sidebar-logo">
+      <img src="https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png" alt="Logo" />
+      <div>
+        <div class="logo-text" style="font-size:0.9rem;">MI LIBRARY</div>
+        <div style="font-size:0.6rem;color:var(--muted);">Admin Panel</div>
+      </div>
+    </div>
+
+    <div class="nav-item active" id="nav-dashboard" onclick="showPane('dashboard')">
+      <svg fill="currentColor" viewBox="0 0 16 16"><path d="M8 4a.5.5 0 0 1 .5.5V6a.5.5 0 0 1-1 0V4.5A.5.5 0 0 1 8 4zM3.732 5.732a.5.5 0 0 1 .707 0l.915.914a.5.5 0 1 1-.708.708l-.914-.915a.5.5 0 0 1 0-.707zM2 10a.5.5 0 0 1 .5-.5h1.586a.5.5 0 0 1 0 1H2.5A.5.5 0 0 1 2 10zm9.5 0a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5zm.754-4.246a.389.389 0 0 0-.527-.02L9.44 7.952l.99 1.109 2.054-1.855a.386.386 0 0 0 .029-.536z"/><path fill-rule="evenodd" d="M5.04 6.115A3.5 3.5 0 0 1 8 5.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5A3.5 3.5 0 0 1 8 5.5z"/></svg>
+      Dashboard
+    </div>
+
+    <div class="nav-item" id="nav-books" onclick="showPane('books')">
+      <svg fill="currentColor" viewBox="0 0 16 16"><path d="M1 2.828c.885-.37 2.154-.769 3.388-.893 1.33-.134 2.458.063 3.112.752v9.746c-.935-.53-2.12-.603-3.213-.493-1.18.12-2.37.461-3.287.811V2.828zm7.5-.141c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.923c-.918-.35-2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492V2.687zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.877a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783z"/></svg>
+      Books
+    </div>
+
+    <div class="nav-item" id="nav-analytics" onclick="showPane('analytics')">
+      <svg fill="currentColor" viewBox="0 0 16 16"><path d="M0 0h1v15h15v1H0V0zm14.817 3.113a.5.5 0 0 1 .07.704l-4.5 5.5-.646.79-.854-.554L6.5 7.195 3.33 10.61a.5.5 0 1 1-.74-.67l3.5-3.857.646-.714.823.534L10 8.15l4.113-5.037a.5.5 0 0 1 .704-.07z"/></svg>
+      Analytics
+    </div>
+
+    <div class="nav-item" id="nav-users" onclick="showPane('users')">
+      <svg fill="currentColor" viewBox="0 0 16 16"><path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002-.014.002H7.022zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816zM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275zM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+      Visitors
+    </div>
+
+    <div class="nav-item" id="nav-settings" onclick="showPane('settings')">
+      <svg fill="currentColor" viewBox="0 0 16 16"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>
+      Settings
+    </div>
+
+    <div style="flex:1;"></div>
+    <div class="nav-item" onclick="window.open('index.html','_blank')">
+      <svg fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5z"/><path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0v-5z"/></svg>
+      View Site
+    </div>
+    <div style="padding:12px 14px;font-size:0.72rem;color:var(--muted);border-top:1px solid var(--border);margin-top:4px;">
+      <span id="adminUserInfo">Admin</span>
+    </div>
+  </nav>
+
+  <!-- Top Bar -->
+  <div id="topBar">
+    <button class="btn btn-glass btn-sm" id="sidebarToggle" onclick="toggleSidebar()" style="display:flex;align-items:center;gap:4px;">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h11A1.5 1.5 0 0 1 15 2.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 13.5v-11zM2.5 2a.5.5 0 0 0-.5.5v11a.5.5 0 0 0 .5.5H5v-12H2.5zm12 12a.5.5 0 0 0 .5-.5v-11a.5.5 0 0 0-.5-.5H6v12h8.5z"/></svg>
+    </button>
+    <div style="flex:1;font-size:0.85rem;font-weight:600;" id="pageTitle">Dashboard</div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span style="font-size:0.7rem;color:var(--green);display:flex;align-items:center;gap:4px;">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 2s infinite;"></span>
+        Live
+      </span>
+      <button class="btn btn-glass btn-sm" onclick="lockAdmin()">🔒 Lock</button>
+    </div>
+  </div>
+
+  <!-- Main Area -->
+  <div id="mainArea">
+
+    <!-- DASHBOARD ───────────────────────────────── -->
+    <div id="pane-dashboard" class="pane active">
+      <div class="page-title">✦ Dashboard</div>
+
+      <div class="dash-grid">
+        <div class="dash-card">
+          <div class="dash-num" style="color:var(--gold);" id="statBooks">0</div>
+          <div class="dash-label">Total Books</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-num" style="color:var(--cyan);" id="statVisitors">0</div>
+          <div class="dash-label">Visitors</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-num" style="color:var(--purple);" id="statDownloads">0</div>
+          <div class="dash-label">Downloads</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-num" style="color:var(--green);" id="statTrending">0</div>
+          <div class="dash-label">Trending</div>
+        </div>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="panel">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">Recent Downloads</span>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <thead><tr>
+              <th>Book Title</th>
+              <th>User</th>
+              <th>Time</th>
+            </tr></thead>
+            <tbody id="recentDownloadsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Top Books -->
+      <div class="panel">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">Top Books by Views</span>
+        </div>
+        <div class="panel-body">
+          <table class="data-table">
+            <thead><tr>
+              <th>#</th>
+              <th>Title</th>
+              <th>Views</th>
+              <th>Status</th>
+            </tr></thead>
+            <tbody id="topBooksTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOOKS ──────────────────────────────────── -->
+    <div id="pane-books" class="pane">
+      <div class="page-title">✦ Books Management</div>
+
+      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
+        <button class="btn btn-gold" onclick="openAddBook()">+ Add New Book</button>
+        <div style="flex:1;position:relative;">
+          <input type="text" id="bookSearch" class="form-input" placeholder="Search books..."
+                 oninput="filterBooksTable(this.value)" style="padding-right:40px;" />
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">All Books (<span id="bookCount">0</span>)</span>
+          <div style="display:flex;gap:8px;">
+            <select class="form-input btn-sm" id="categoryFilter" onchange="filterBooksTable()" style="width:auto;padding:6px 10px;font-size:0.75rem;">
+              <option value="">All Categories</option>
+              <option>fiction</option>
+              <option>non-fiction</option>
+              <option>science</option>
+              <option>history</option>
+              <option>religion</option>
+              <option>technology</option>
+            </select>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data-table" style="min-width:600px;">
+            <thead><tr>
+              <th>Cover</th>
+              <th>Title</th>
+              <th>Author</th>
+              <th>Category</th>
+              <th>Views</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr></thead>
+            <tbody id="booksTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANALYTICS ──────────────────────────────── -->
+    <div id="pane-analytics" class="pane">
+      <div class="page-title">✦ Visitor Analytics</div>
+
+      <div class="dash-grid" style="grid-template-columns:repeat(2,1fr);">
+        <div class="dash-card">
+          <div class="dash-num" style="color:var(--cyan);" id="uniqueCountries">0</div>
+          <div class="dash-label">Countries</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-num" style="color:var(--gold);" id="todayVisitors">0</div>
+          <div class="dash-label">Today's Visitors</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">Visitor Log</span>
+          <span style="font-size:0.7rem;color:var(--muted);" id="visitorCount">0 records</span>
+        </div>
+        <div class="panel-body">
+          <table class="data-table" style="min-width:700px;">
+            <thead><tr>
+              <th>IP</th>
+              <th>City</th>
+              <th>Country</th>
+              <th>Device</th>
+              <th>Time</th>
+            </tr></thead>
+            <tbody id="analyticsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- USERS/VISITORS ─────────────────────────── -->
+    <div id="pane-users" class="pane">
+      <div class="page-title">✦ User Management</div>
+      <div class="panel">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">All Visitors</span>
+        </div>
+        <div class="panel-body">
+          <table class="data-table" style="min-width:700px;">
+            <thead><tr>
+              <th>IP Address</th>
+              <th>Location</th>
+              <th>Device</th>
+              <th>Timestamp</th>
+            </tr></thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS ───────────────────────────────── -->
+    <div id="pane-settings" class="pane">
+      <div class="page-title">✦ Settings</div>
+
+      <div class="panel" style="padding:20px;">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">Change Admin Passcode</span>
+        </div>
+        <div style="padding:20px;">
+          <div class="form-group">
+            <label class="form-label">New Passcode (6 digits)</label>
+            <input type="password" id="newPasscode" class="form-input" placeholder="Enter new 6-digit passcode" maxlength="6" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confirm Passcode</label>
+            <input type="password" id="confirmPasscode" class="form-input" placeholder="Confirm passcode" maxlength="6" />
+          </div>
+          <button class="btn btn-gold" onclick="changePasscode()">Update Passcode</button>
+        </div>
+      </div>
+
+      <div class="panel" style="padding:20px;">
+        <div class="panel-header">
+          <span style="font-weight:700;font-size:0.85rem;">Site Settings</span>
+        </div>
+        <div style="padding:20px;display:flex;flex-direction:column;gap:12px;">
+          <div class="form-group">
+            <label class="form-label">Site Name</label>
+            <input type="text" id="settingSiteName" class="form-input" value="LuminaLib" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Site Tagline</label>
+            <input type="text" id="settingTagline" class="form-input" value="Your Digital Books Universe" />
+          </div>
+          <button class="btn btn-gold">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /mainArea -->
+</div><!-- /adminUI -->
+
+<!-- ── Book Form Modal ────────────────────────────────────── -->
+<div id="bookFormModal">
+  <div class="modal-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div style="font-family:'Cinzel Decorative',serif;font-size:0.95rem;color:var(--gold);" id="formModalTitle">Add New Book</div>
+      <button onclick="closeBookModal()" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;">✕</button>
+    </div>
+
+    <input type="hidden" id="editBookId" />
+
+    <div class="form-group">
+      <label class="form-label">Book Title *</label>
+      <input type="text" id="fTitle" class="form-input" placeholder="Enter book title" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Author *</label>
+      <input type="text" id="fAuthor" class="form-input" placeholder="Author name" />
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <select id="fCategory" class="form-input">
+          <option value="">Select...</option>
+          <option>fiction</option>
+          <option>non-fiction</option>
+          <option>science</option>
+          <option>history</option>
+          <option>religion</option>
+          <option>technology</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Language</label>
+        <select id="fLanguage" class="form-input">
+          <option value="English">English</option>
+          <option value="Urdu">Urdu</option>
+          <option value="Arabic">Arabic</option>
+          <option value="Hindi">Hindi</option>
+          <option value="French">French</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea id="fDesc" class="form-input" placeholder="Book description..."></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Cover Image URL *</label>
+      <input type="url" id="fCover" class="form-input" placeholder="https://example.com/cover.jpg"
+             oninput="previewCover(this.value)" />
+      <img id="coverPreview" src="" alt="Preview" style="width:60px;height:80px;object-fit:cover;border-radius:6px;margin-top:8px;display:none;" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">PDF URL *</label>
+      <input type="url" id="fPdf" class="form-input" placeholder="https://example.com/book.pdf" />
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <input type="checkbox" id="fTrending" style="width:16px;height:16px;cursor:pointer;" />
+      <label for="fTrending" style="font-size:0.8rem;font-weight:600;cursor:pointer;">Mark as Trending 🔥</label>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-gold flex-1" onclick="submitBookForm()">Save Book</button>
+      <button class="btn btn-glass flex-1" onclick="closeBookModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Admin Toast ────────────────────────────────────────── -->
+<div id="adminToast"></div>
+
+<style>
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
+</style>
+
+<script>
+  // ── Passcode System ───────────────────────────────────────
+  const ADMIN_PASS_KEY = 'll_admin_pass';
+  let correctPasscode = localStorage.getItem(ADMIN_PASS_KEY) || '123456';
+  let enteredCode = '';
+  window.adminUnlocked = false;
+
+  function numPress(val) {
+    if (val === 'clear') { enteredCode = ''; }
+    else if (val === 'del') { enteredCode = enteredCode.slice(0, -1); }
+    else if (enteredCode.length < 6) { enteredCode += val; }
+    updateDots();
+    if (enteredCode.length === 6) checkPasscode();
+  }
+
+  function updateDots() {
+    for (let i = 0; i < 6; i++) {
+      document.getElementById(`d${i}`).classList.toggle('filled', i < enteredCode.length);
+    }
+  }
+
+  function checkPasscode() {
+    if (enteredCode === correctPasscode) {
+      document.getElementById('lockScreen').style.animation = 'fadeOut 0.4s ease forwards';
+      setTimeout(() => {
+        document.getElementById('lockScreen').style.display = 'none';
+        document.getElementById('adminUI').style.display = 'block';
+        window.adminUnlocked = true;
+        renderBooksTable();
+        renderAnalyticsTable();
+        updateDashStats();
+        renderRecentDownloads();
+      }, 400);
+    } else {
+      document.getElementById('lockHint').textContent = 'Incorrect passcode. Try again.';
+      document.getElementById('lockHint').style.color = 'var(--rose)';
+      enteredCode = '';
+      updateDots();
+      setTimeout(() => { document.getElementById('lockHint').textContent = ''; }, 2000);
+    }
+  }
+
+  function lockAdmin() {
+    window.adminUnlocked = false;
+    document.getElementById('adminUI').style.display = 'none';
+    document.getElementById('lockScreen').style.display = 'flex';
+    document.getElementById('lockScreen').style.animation = '';
+    enteredCode = '';
+    updateDots();
+  }
+
+  function changePasscode() {
+    const np = document.getElementById('newPasscode').value;
+    const cp = document.getElementById('confirmPasscode').value;
+    if (np.length !== 6 || !/^\d{6}$/.test(np)) { showAdminToast('Passcode must be 6 digits!', 'error'); return; }
+    if (np !== cp) { showAdminToast('Passcodes do not match!', 'error'); return; }
+    localStorage.setItem(ADMIN_PASS_KEY, np);
+    correctPasscode = np;
+    showAdminToast('Passcode updated!', 'success');
+    document.getElementById('newPasscode').value = '';
+    document.getElementById('confirmPasscode').value = '';
+  }
+
+  // ── Navigation ────────────────────────────────────────────
+  function showPane(name) {
+    document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById(`pane-${name}`).classList.add('active');
+    document.getElementById(`nav-${name}`)?.classList.add('active');
+    document.getElementById('pageTitle').textContent = name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+  }
+
+  // ── Dashboard Stats ───────────────────────────────────────
+  function updateDashStats() {
+    document.getElementById('statBooks').textContent = window.adminBooks.length;
+    document.getElementById('statVisitors').textContent = window.adminVisitors.length;
+    document.getElementById('statDownloads').textContent = window.adminDownloads.length;
+    document.getElementById('statTrending').textContent = window.adminBooks.filter(b => b.trending).length;
+
+    // Top books table
+    const sorted = [...window.adminBooks].sort((a,b) => (b.views||0)-(a.views||0)).slice(0,8);
+    document.getElementById('topBooksTable').innerHTML = sorted.map((b,i) => `
+      <tr>
+        <td style="color:var(--muted);font-family:'JetBrains Mono',monospace;">${String(i+1).padStart(2,'0')}</td>
+        <td style="font-weight:600;">${esc(b.title||'')}</td>
+        <td style="color:var(--cyan);">${(b.views||0).toLocaleString()}</td>
+        <td>${b.trending ? '<span class="badge badge-gold">🔥 Trending</span>' : '<span class="badge badge-muted">Normal</span>'}</td>
+      </tr>`).join('');
+
+    renderRecentDownloads();
+  }
+
+  function renderRecentDownloads() {
+    const downloads = window.adminDownloads.slice(0, 10);
+    document.getElementById('recentDownloadsTable').innerHTML = downloads.length ? downloads.map(d => `
+      <tr>
+        <td style="font-weight:600;">${esc(d.title||'')}</td>
+        <td style="color:var(--muted);font-size:0.72rem;">${esc(d.uid||'')}</td>
+        <td style="color:var(--muted);font-size:0.72rem;">${d.ts ? new Date(d.ts).toLocaleString() : '–'}</td>
+      </tr>`).join('') :
+      `<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:24px;">No downloads yet</td></tr>`;
+  }
+
+  // ── Books Table ───────────────────────────────────────────
+  function renderBooksTable(filter = '', category = '') {
+    const body = document.getElementById('booksTableBody');
+    const q = (filter || document.getElementById('bookSearch')?.value || '').toLowerCase();
+    const cat = category || document.getElementById('categoryFilter')?.value || '';
+    document.getElementById('bookCount').textContent = window.adminBooks.length;
+
+    let books = window.adminBooks;
+    if (q) books = books.filter(b => (b.title||'').toLowerCase().includes(q) || (b.author||'').toLowerCase().includes(q));
+    if (cat) books = books.filter(b => (b.category||'').toLowerCase() === cat.toLowerCase());
+
+    if (!books.length) {
+      body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:40px;">No books found</td></tr>`;
+      return;
+    }
+
+    body.innerHTML = books.map(b => `
+      <tr>
+        <td>
+          ${b.coverUrl ? `<img src="${esc(b.coverUrl)}" class="book-thumb" onerror="this.style.background='var(--purple)'" />` : `<div style="width:36px;height:48px;border-radius:4px;background:linear-gradient(135deg,var(--purple),var(--card));display:flex;align-items:center;justify-content:center;font-size:0.8rem;">📖</div>`}
+        </td>
+        <td style="font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(b.title||'')}</td>
+        <td style="color:var(--muted);font-size:0.75rem;">${esc(b.author||'')}</td>
+        <td>${b.category ? `<span class="badge badge-muted">${esc(b.category)}</span>` : '–'}</td>
+        <td style="color:var(--cyan);font-family:'JetBrains Mono',monospace;">${(b.views||0).toLocaleString()}</td>
+        <td>${b.trending ? '<span class="badge badge-gold">🔥 Hot</span>' : '<span class="badge badge-muted">Normal</span>'}</td>
+        <td>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-purple btn-sm" onclick="openEditBook('${b.id}')">✏ Edit</button>
+            <button class="btn btn-glass btn-sm" onclick="window.toggleTrending('${b.id}',${!!b.trending})">${b.trending?'Untrend':'🔥 Trend'}</button>
+            <button class="btn btn-red btn-sm" onclick="window.deleteBook('${b.id}','${esc(b.title||'')}')">🗑</button>
+          </div>
+        </td>
+      </tr>`).join('');
+  }
+
+  function filterBooksTable() {
+    renderBooksTable();
+  }
+
+  // ── Analytics Table ───────────────────────────────────────
+  function renderAnalyticsTable() {
+    const body = document.getElementById('analyticsTableBody');
+    const uBody = document.getElementById('usersTableBody');
+    const visitors = window.adminVisitors.slice(0, 100);
+
+    document.getElementById('visitorCount').textContent = visitors.length + ' records';
+
+    const today = new Date().toDateString();
+    const todayCount = visitors.filter(v => v.ts && new Date(v.ts).toDateString() === today).length;
+    document.getElementById('todayVisitors').textContent = todayCount;
+
+    const countries = [...new Set(visitors.map(v => v.country).filter(Boolean))];
+    document.getElementById('uniqueCountries').textContent = countries.length;
+
+    const rows = visitors.slice(0,50).map(v => `
+      <tr>
+        <td style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--cyan);">${esc(v.ip||'–')}</td>
+        <td style="font-size:0.75rem;">${esc(v.city||'–')}</td>
+        <td style="font-size:0.75rem;">${esc(v.country||'–')}</td>
+        <td style="font-size:0.65rem;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((v.device||'').substring(0,60))}</td>
+        <td style="font-size:0.7rem;color:var(--muted);white-space:nowrap;">${v.timestamp ? new Date(v.timestamp).toLocaleString() : '–'}</td>
+      </tr>`).join('');
+
+    body.innerHTML = rows || `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;">No visitors yet</td></tr>`;
+    uBody.innerHTML = rows || `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px;">No visitors yet</td></tr>`;
+  }
+
+  // ── Book Form ─────────────────────────────────────────────
+  function openAddBook() {
+    document.getElementById('formModalTitle').textContent = 'Add New Book';
+    document.getElementById('editBookId').value = '';
+    document.getElementById('fTitle').value = '';
+    document.getElementById('fAuthor').value = '';
+    document.getElementById('fCategory').value = '';
+    document.getElementById('fLanguage').value = 'English';
+    document.getElementById('fDesc').value = '';
+    document.getElementById('fCover').value = '';
+    document.getElementById('fPdf').value = '';
+    document.getElementById('fTrending').checked = false;
+    document.getElementById('coverPreview').style.display = 'none';
+    document.getElementById('bookFormModal').classList.add('open');
+  }
+
+  function openEditBook(bookId) {
+    const book = window.adminBooks.find(b => b.id === bookId);
+    if (!book) return;
+    document.getElementById('formModalTitle').textContent = 'Edit Book';
+    document.getElementById('editBookId').value = bookId;
+    document.getElementById('fTitle').value = book.title || '';
+    document.getElementById('fAuthor').value = book.author || '';
+    document.getElementById('fCategory').value = book.category || '';
+    document.getElementById('fLanguage').value = book.language || 'English';
+    document.getElementById('fDesc').value = book.description || '';
+    document.getElementById('fCover').value = book.coverUrl || '';
+    document.getElementById('fPdf').value = book.pdfUrl || '';
+    document.getElementById('fTrending').checked = !!book.trending;
+    previewCover(book.coverUrl);
+    document.getElementById('bookFormModal').classList.add('open');
+  }
+
+  function closeBookModal() {
+    document.getElementById('bookFormModal').classList.remove('open');
+  }
+
+  function previewCover(url) {
+    const img = document.getElementById('coverPreview');
+    if (url && url.startsWith('http')) {
+      img.src = url;
+      img.style.display = 'block';
+    } else {
+      img.style.display = 'none';
+    }
+  }
+
+  function submitBookForm() {
+    const title = document.getElementById('fTitle').value.trim();
+    const pdfUrl = document.getElementById('fPdf').value.trim();
+    if (!title) { showAdminToast('Title is required!', 'error'); return; }
+    if (!pdfUrl) { showAdminToast('PDF URL is required!', 'error'); return; }
+
+    const data = {
+      title,
+      author: document.getElementById('fAuthor').value.trim(),
+      category: document.getElementById('fCategory').value,
+      language: document.getElementById('fLanguage').value,
+      description: document.getElementById('fDesc').value.trim(),
+      coverUrl: document.getElementById('fCover').value.trim(),
+      pdfUrl,
+      trending: document.getElementById('fTrending').checked,
+    };
+
+    const editId = document.getElementById('editBookId').value;
+    window.saveBook(data, editId || null);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────
+  function esc(str) {
+    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function showAdminToast(msg, type = 'info') {
+    const toast = document.getElementById('adminToast');
+    const colors = { success: 'rgba(16,185,129,0.9)', error: 'rgba(239,68,68,0.9)', info: 'rgba(139,92,246,0.9)' };
+    toast.textContent = msg;
+    toast.style.background = colors[type] || colors.info;
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 3000);
+  }
+  window.showAdminToast = showAdminToast;
+
+  // ── Keyboard for numpad ───────────────────────────────────
+  document.addEventListener('keydown', e => {
+    if (!window.adminUnlocked) {
+      if (/^\d$/.test(e.key)) numPress(e.key);
+      else if (e.key === 'Backspace') numPress('del');
+      else if (e.key === 'Escape') numPress('clear');
+    }
+  });
+
+  // Fade out keyframe
+  const style = document.createElement('style');
+  style.textContent = `@keyframes fadeOut { to { opacity: 0; transform: scale(0.95); } }`;
+  document.head.appendChild(style);
+  function toggleSidebar() {
+    const sidebar = document.getElementById("sidebar");
+
+    if (sidebar.classList.contains("open")) {
+      sidebar.classList.remove("open");
+    } else {
+      sidebar.classList.add("open");
+    }
+  }
+
+  // Mobile pe outside click se close
+  document.addEventListener("click", function(e) {
+    const sidebar = document.getElementById("sidebar");
+    const toggleBtn = document.getElementById("sidebarToggle");
+
+    if (!sidebar.contains(e.target) && !toggleBtn.contains(e.target)) {
+      if (window.innerWidth < 768) {
+        sidebar.classList.remove("open");
+      }
+    }
+  });
+
+  // Resize fix (desktop pe auto open)
+  window.addEventListener("resize", function() {
+    const sidebar = document.getElementById("sidebar");
+
+    if (window.innerWidth >= 768) {
+      sidebar.classList.add("open");
+    } else {
+      sidebar.classList.remove("open");
+    }
+  });
+</script>
+
+</body>
+</html>

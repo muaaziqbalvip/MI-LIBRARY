@@ -1,69 +1,55 @@
-// api/download.js — Vercel Serverless Function
-// Masks actual PDF source URLs for security
+// LuminaLib Download API — Masked URL handler
+// Vercel serverless function
 
 export default async function handler(req, res) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const { token } = req.query;
+  const { token, fallback } = req.query;
 
   if (!token) {
     return res.status(400).json({ error: 'Missing token' });
   }
 
   try {
-    // Decode the masked token
-    const decoded = Buffer.from(token, 'base64').toString('utf-8');
-    const [pdfUrl, timestamp, uid] = decoded.split('|');
+    // Decode the token
+    const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+    const { id, uid, ts, hash } = decoded;
 
-    // Validate token is not expired (30 minutes)
-    const tokenAge = Date.now() - parseInt(timestamp || '0');
-    if (tokenAge > 30 * 60 * 1000) {
-      return res.status(410).json({ error: 'Download link expired. Please try again.' });
+    // Validate token age (48 hours)
+    if (Date.now() - ts > 48 * 60 * 60 * 1000) {
+      return res.status(410).json({ error: 'Download link expired. Please re-download from the app.' });
     }
 
-    // Validate URL format
-    if (!pdfUrl || !pdfUrl.startsWith('http')) {
-      return res.status(400).json({ error: 'Invalid resource.' });
-    }
+    // Reconstruct the URL from the hash
+    const pdfUrl = Buffer.from(hash.split('').reverse().join(''), 'base64').toString('utf8');
 
-    // Fetch the PDF from the actual source
-    const response = await fetch(pdfUrl, {
-      headers: {
-        'User-Agent': 'LuminaLib-Proxy/1.0',
-      }
-    });
+    // Stream the PDF with proper headers
+    const response = await fetch(pdfUrl);
 
     if (!response.ok) {
-      return res.status(502).json({ error: 'Could not fetch resource.' });
+      // Fallback to direct URL if provided
+      if (fallback) {
+        return res.redirect(302, decodeURIComponent(fallback));
+      }
+      return res.status(404).json({ error: 'PDF not found' });
     }
 
-    const contentType = response.headers.get('content-type') || 'application/pdf';
-    const contentLength = response.headers.get('content-length');
-
-    // Set proxy headers
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', 'attachment; filename="book.pdf"');
+    // Set download headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="book-${id}.pdf"`);
     res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.setHeader('X-Proxied-By', 'LuminaLib');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Prevent hotlinking info exposure
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
 
-    // Stream the file
     const buffer = await response.arrayBuffer();
     return res.send(Buffer.from(buffer));
 
   } catch (err) {
-    console.error('[Download API Error]', err);
-    return res.status(500).json({ error: 'Internal server error.' });
+    console.error('[Download API] Error:', err);
+    // Fallback to direct URL
+    if (fallback) {
+      return res.redirect(302, decodeURIComponent(fallback));
+    }
+    return res.status(500).json({ error: 'Download failed' });
   }
 }

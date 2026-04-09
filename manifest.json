@@ -1,15 +1,14 @@
 {
   "name": "LuminaLib – Digital Books Library",
   "short_name": "LuminaLib",
-  "description": "A stunning 3D digital books library with real-time analytics, offline reading, and personalized recommendations.",
+  "description": "Discover, read, and download thousands of books. Free access, offline reading, and real-time updates.",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#080612",
   "theme_color": "#0f0c1a",
-  "lang": "en",
-  "scope": "/",
+  "orientation": "portrait-primary",
   "categories": ["books", "education", "entertainment"],
+  "lang": "en",
   "icons": [
     {
       "src": "https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png",
@@ -24,23 +23,22 @@
       "purpose": "any maskable"
     }
   ],
-  "screenshots": [],
-  "shortcuts": [
+  "screenshots": [
     {
-      "name": "Search Books",
-      "short_name": "Search",
-      "description": "Search the digital library",
-      "url": "/?tab=search",
-      "icons": [{ "src": "https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png", "sizes": "96x96" }]
-    },
-    {
-      "name": "My Downloads",
-      "short_name": "Downloads",
-      "description": "View your downloaded books",
-      "url": "/?tab=downloads",
-      "icons": [{ "src": "https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png", "sizes": "96x96" }]
+      "src": "https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
     }
   ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "url": "q"
+    }
+  },
   "related_applications": [],
   "prefer_related_applications": false
 }

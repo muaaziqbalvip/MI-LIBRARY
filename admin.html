@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MI Library – Control Center</title>
+  <title>LuminaLib – Control Center</title>
   <meta name="robots" content="noindex, nofollow" />
   <link rel="icon" href="https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png" type="image/png" />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
@@ -58,6 +58,54 @@
       window.adminDownloads = Object.entries(data).map(([id, d]) => ({ id, ...d }));
       if (window.adminUnlocked) updateDashStats();
     });
+
+    // Pending books listener
+    onValue(ref(db, 'books'), snap => {
+      const data = snap.val() || {};
+      window.pendingBooks = Object.entries(data)
+        .map(([id, b]) => ({ id, ...b }))
+        .filter(b => b.status === 'pending');
+      const badge = document.getElementById('pendingCount');
+      if (badge) badge.textContent = window.pendingBooks.length || '';
+      if (window.adminUnlocked) renderPendingBooks();
+    });
+
+    // Payment verifications listener
+    onValue(ref(db, 'payment_verifications'), snap => {
+      const data = snap.val() || {};
+      window.pendingPayments = Object.entries(data)
+        .map(([id, p]) => ({ id, ...p }))
+        .filter(p => p.status === 'pending');
+      const badge = document.getElementById('paymentBadge');
+      if (badge) badge.textContent = window.pendingPayments.length || '';
+      if (window.adminUnlocked) renderPaymentsList();
+    });
+
+    // Approve book
+    window.approveBook = async (bookId) => {
+      await update(ref(db, `books/${bookId}`), { status: 'approved', approvedAt: serverTimestamp() });
+      showAdminToast('Book approved and published!', 'success');
+    };
+
+    // Reject book
+    window.rejectBook = async (bookId, reason) => {
+      await update(ref(db, `books/${bookId}`), { status: 'rejected', rejectedAt: serverTimestamp(), rejectReason: reason || 'Not approved' });
+      showAdminToast('Book rejected.', 'success');
+    };
+
+    // Approve payment
+    window.approvePayment = async (paymentId, bookId, uid) => {
+      await update(ref(db, `payment_verifications/${paymentId}`), { status: 'approved', approvedAt: serverTimestamp() });
+      // Unlock book for user
+      await set(ref(db, `payments/${uid}/${bookId}`), { verified: true, verifiedAt: serverTimestamp() });
+      showAdminToast('Payment verified! Book unlocked for user.', 'success');
+    };
+
+    // Reject payment
+    window.rejectPayment = async (paymentId) => {
+      await update(ref(db, `payment_verifications/${paymentId}`), { status: 'rejected', rejectedAt: serverTimestamp() });
+      showAdminToast('Payment rejected.', 'success');
+    };
 
     // Auth listener
     onAuthStateChanged(auth, user => {
@@ -305,7 +353,7 @@
 <div id="lockScreen">
   <div class="lock-card">
     <img src="https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png"
-         alt="MI Library" class="w-14 h-14 rounded-2xl mx-auto object-cover mb-4" />
+         alt="LuminaLib" class="w-14 h-14 rounded-2xl mx-auto object-cover mb-4" />
     <div class="logo-text mb-1">Control Center</div>
     <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;">Admin Access Required</p>
     <p id="lockHint" style="font-size:0.72rem;color:var(--rose);margin-bottom:16px;height:18px;"></p>
@@ -344,7 +392,7 @@
     <div class="sidebar-logo">
       <img src="https://i.ibb.co/d0xwVb2b/file-00000000246471fa9014d17924d4447a.png" alt="Logo" />
       <div>
-        <div class="logo-text" style="font-size:0.9rem;">MI Library</div>
+        <div class="logo-text" style="font-size:0.9rem;">LuminaLib</div>
         <div style="font-size:0.6rem;color:var(--muted);">Admin Panel</div>
       </div>
     </div>
@@ -589,7 +637,7 @@
         <div style="padding:20px;display:flex;flex-direction:column;gap:12px;">
           <div class="form-group">
             <label class="form-label">Site Name</label>
-            <input type="text" id="settingSiteName" class="form-input" value="MI Library" />
+            <input type="text" id="settingSiteName" class="form-input" value="LuminaLib" />
           </div>
           <div class="form-group">
             <label class="form-label">Site Tagline</label>
@@ -658,6 +706,27 @@
     <div class="form-group">
       <label class="form-label">PDF URL *</label>
       <input type="url" id="fPdf" class="form-input" placeholder="https://example.com/book.pdf" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Price (PKR) — 0 = Free</label>
+      <input type="number" id="fPrice" class="form-input" placeholder="0" min="0" value="0" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">License</label>
+      <select id="fLicense" class="form-input">
+        <option value="All Rights Reserved">All Rights Reserved</option>
+        <option value="Creative Commons CC BY">Creative Commons CC BY</option>
+        <option value="Creative Commons CC BY-NC">CC BY-NC (Non-Commercial)</option>
+        <option value="Public Domain">Public Domain</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select id="fStatus" class="form-input">
+        <option value="approved">Approved (Published)</option>
+        <option value="pending">Pending Review</option>
+        <option value="rejected">Rejected</option>
+      </select>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <input type="checkbox" id="fTrending" style="width:16px;height:16px;cursor:pointer;" />
@@ -747,6 +816,10 @@
     document.getElementById(`pane-${name}`).classList.add('active');
     document.getElementById(`nav-${name}`)?.classList.add('active');
     document.getElementById('pageTitle').textContent = name.charAt(0).toUpperCase() + name.slice(1);
+    // Trigger render for dynamic panes
+    if (name === 'pending') renderPendingBooks();
+    if (name === 'payments') renderPaymentsList();
+    if (name === 'copyright') renderCopyrightList();
   }
 
   function toggleSidebar() {
@@ -881,6 +954,9 @@
     document.getElementById('fCover').value = book.coverUrl || '';
     document.getElementById('fPdf').value = book.pdfUrl || '';
     document.getElementById('fTrending').checked = !!book.trending;
+    document.getElementById('fPrice').value = book.price || 0;
+    document.getElementById('fLicense').value = book.copyright?.license || 'All Rights Reserved';
+    document.getElementById('fStatus').value = book.status || 'approved';
     previewCover(book.coverUrl);
     document.getElementById('bookFormModal').classList.add('open');
   }
@@ -914,6 +990,13 @@
       coverUrl: document.getElementById('fCover').value.trim(),
       pdfUrl,
       trending: document.getElementById('fTrending').checked,
+      price: parseInt(document.getElementById('fPrice').value) || 0,
+      status: document.getElementById('fStatus').value || 'approved',
+      copyright: {
+        owner: document.getElementById('fAuthor').value.trim(),
+        year: new Date().getFullYear(),
+        license: document.getElementById('fLicense').value
+      }
     };
 
     const editId = document.getElementById('editBookId').value;
@@ -921,6 +1004,107 @@
   }
 
   // ── Helpers ───────────────────────────────────────────────
+  // ── Render Pending Books ─────────────────────────────────
+  function renderPendingBooks() {
+    const container = document.getElementById('pendingBooksList');
+    if (!container) return;
+    const books = window.pendingBooks || [];
+    if (!books.length) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">No pending books ✓</div>';
+      return;
+    }
+    container.innerHTML = books.map(b => `
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:16px;">
+        <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:12px;">
+          ${b.coverUrl?`<img src="${esc(b.coverUrl)}" style="width:60px;height:80px;object-fit:cover;border-radius:8px;flex-shrink:0;" onerror="this.style.background='var(--purple)'" />`:`<div style="width:60px;height:80px;border-radius:8px;background:linear-gradient(135deg,var(--purple),var(--card));display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0;">📖</div>`}
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:0.9rem;margin-bottom:4px;">${esc(b.title||'Untitled')}</div>
+            <div style="font-size:0.75rem;color:var(--cyan);margin-bottom:4px;">✍ ${esc(b.author||b.authorName||'Unknown')}</div>
+            <div style="font-size:0.7rem;color:var(--muted);margin-bottom:6px;">${esc(b.description||'').substring(0,100)}${(b.description||'').length>100?'...':''}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${b.category?`<span style="background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);padding:2px 8px;border-radius:10px;font-size:0.65rem;color:var(--purple);">${esc(b.category)}</span>`:''}
+              ${b.language?`<span style="background:rgba(0,245,255,0.1);border:1px solid rgba(0,245,255,0.2);padding:2px 8px;border-radius:10px;font-size:0.65rem;color:var(--cyan);">${esc(b.language)}</span>`:''}
+              ${b.price>0?`<span style="background:rgba(245,200,66,0.15);padding:2px 8px;border-radius:10px;font-size:0.65rem;color:var(--gold);">PKR ${b.price}</span>`:'<span style="background:rgba(16,185,129,0.15);padding:2px 8px;border-radius:10px;font-size:0.65rem;color:#10b981;">Free</span>'}
+            </div>
+          </div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px;">
+          <strong>Submitted by:</strong> ${esc(b.authorName||b.authorEmail||'Unknown')} •
+          <a href="${esc(b.pdfUrl||'')}" target="_blank" style="color:var(--cyan);">View PDF ↗</a>
+        </div>
+        ${b.copyright?`<div style="font-size:0.7rem;color:var(--muted);margin-bottom:10px;">©️ ${esc(b.copyright.year)} ${esc(b.copyright.owner)} — ${esc(b.copyright.license)}</div>`:''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-gold btn-sm" onclick="approveBookAction('${b.id}')">✓ Approve & Publish</button>
+          <button class="btn btn-red btn-sm" onclick="rejectBookAction('${b.id}','${esc(b.title||'')}')">✗ Reject</button>
+          <button class="btn btn-purple btn-sm" onclick="openEditBook('${b.id}');showPane('books')">✏ Edit First</button>
+        </div>
+      </div>`).join('');
+  }
+
+  function approveBookAction(bookId) {
+    if (!confirm('Approve and publish this book?')) return;
+    window.approveBook(bookId);
+  }
+
+  function rejectBookAction(bookId, title) {
+    const reason = prompt(`Reason for rejecting "${title}"? (optional)`);
+    window.rejectBook(bookId, reason);
+  }
+
+  // ── Render Payments ───────────────────────────────────────
+  function renderPaymentsList() {
+    const container = document.getElementById('paymentsList');
+    if (!container) return;
+    const payments = window.pendingPayments || [];
+    if (!payments.length) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">No pending payments ✓</div>';
+      return;
+    }
+    container.innerHTML = payments.map(p => `
+      <div style="background:var(--glass);border:1px solid rgba(245,200,66,0.2);border-radius:16px;padding:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <div>
+            <div style="font-weight:700;font-size:0.88rem;">${esc(p.bookTitle||'Unknown Book')}</div>
+            <div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">User: ${esc(p.userName||p.uid||'Unknown')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.1rem;font-weight:800;color:var(--gold);">PKR ${p.price||0}</div>
+            <div style="font-size:0.65rem;color:var(--muted);">JazzCash</div>
+          </div>
+        </div>
+        <div style="background:rgba(0,0,0,0.3);border-radius:10px;padding:10px;margin-bottom:12px;font-size:0.72rem;">
+          <div style="color:var(--muted);margin-bottom:4px;">Transaction ID submitted by user:</div>
+          <div style="font-family:'JetBrains Mono',monospace;color:var(--cyan);font-size:0.82rem;">${esc(p.jcTxnId||'Not provided')}</div>
+          <div style="color:var(--muted);margin-top:6px;">Reference: <span style="color:var(--gold);font-family:'JetBrains Mono',monospace;">${esc(p.refId||'')}</span></div>
+        </div>
+        <div style="font-size:0.7rem;color:var(--muted);margin-bottom:10px;">
+          Check this Transaction ID in your JazzCash app to verify the payment of PKR ${p.price||0} was received.
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-gold btn-sm" onclick="if(confirm('Confirm payment verified in JazzCash?')) window.approvePayment('${p.id}','${p.bookId}','${p.uid}')">✓ Verified — Unlock Book</button>
+          <button class="btn btn-red btn-sm" onclick="if(confirm('Reject this payment?')) window.rejectPayment('${p.id}')">✗ Reject</button>
+        </div>
+      </div>`).join('');
+  }
+
+  // ── Render Copyright ──────────────────────────────────────
+  function renderCopyrightList() {
+    const container = document.getElementById('copyrightList');
+    if (!container) return;
+    const books = window.adminBooks.filter(b => b.copyright || b.author);
+    container.innerHTML = books.length ? books.map(b => `
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;">
+        <div style="font-size:1.5rem;">©️</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:0.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(b.title||'')}</div>
+          <div style="font-size:0.7rem;color:var(--cyan);margin-top:2px;">${esc(b.copyright?.owner||b.author||'Unknown')}</div>
+          <div style="font-size:0.65rem;color:var(--muted);margin-top:2px;">${esc(b.copyright?.year||new Date().getFullYear())} · ${esc(b.copyright?.license||'All Rights Reserved')}</div>
+        </div>
+        ${b.price>0?`<span style="background:rgba(245,200,66,0.15);padding:3px 8px;border-radius:8px;font-size:0.7rem;color:var(--gold);white-space:nowrap;">PKR ${b.price}</span>`:''}
+      </div>`).join('') :
+    '<div style="text-align:center;padding:40px;color:var(--muted);">No books with copyright info</div>';
+  }
+
   function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
@@ -979,7 +1163,7 @@
     } else {
       sidebar.classList.remove("open");
     }
-  });
+      });
 </script>
 
 </body>
